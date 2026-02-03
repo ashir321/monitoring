@@ -100,7 +100,7 @@ data:
         Name                grafana-loki
         Match               kube.*
         url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
-        labels              job=fluent-bit
+        labels              {job="fluent-bit"}
         auto_kubernetes_labels on
         remove_keys         kubernetes,docker
         line_format         json
