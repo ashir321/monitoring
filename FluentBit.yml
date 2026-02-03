@@ -97,17 +97,14 @@ data:
         Add                 hostname ${HOSTNAME}
 
     [OUTPUT]
-        Name                loki
+        Name                grafana-loki
         Match               kube.*
-        host                loki.monitoring.svc.cluster.local
-        port                3100
-        http_path           /loki/api/v1/push
-        tenant_id           ""
-        remove_keys         kubernetes,docker
+        url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
         labels              job=fluent-bit
         auto_kubernetes_labels on
-        log_level           info
+        remove_keys         kubernetes,docker
         line_format         json
+        log_level           info
 
   parsers.conf: |
     [PARSER]
