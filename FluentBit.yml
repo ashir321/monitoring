@@ -101,8 +101,9 @@ data:
         Match               kube.*
         url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
         labels              {job="fluent-bit"}
+        label_keys          $kubernetes['namespace_name'],$kubernetes['pod_name'],$kubernetes['container_name'],$kubernetes['host']
         auto_kubernetes_labels on
-        remove_keys         kubernetes,docker
+        drop_single_key     on
         line_format         json
         log_level           info
 

@@ -73,4 +73,7 @@ spec:
     - port: 3100
       targetPort: 3100
       name: http
+    - port: 9096
+      targetPort: 9096
+      name: grpc
   type: ClusterIP
