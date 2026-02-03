@@ -96,13 +96,19 @@ data:
         Match               *
         Add                 hostname ${HOSTNAME}
 
+    [FILTER]
+        Name                nest
+        Match               kube.*
+        Operation           lift
+        Nested_under        kubernetes
+        Add_prefix          k8s_
+
     [OUTPUT]
         Name                grafana-loki
         Match               kube.*
         url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
-        labels              {job="fluent-bit"}
-        label_keys          $kubernetes['namespace_name'],$kubernetes['pod_name'],$kubernetes['container_name'],$kubernetes['host']
-        auto_kubernetes_labels on
+        labels              job=fluent-bit
+        label_keys          k8s_namespace_name,k8s_pod_name,k8s_container_name,k8s_host
         drop_single_key     on
         line_format         json
         log_level           info
