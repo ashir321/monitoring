@@ -99,12 +99,13 @@ data:
     [OUTPUT]
         Name                grafana-loki
         Match               kube.*
-        Url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+        url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
         Labels              job=fluent-bit
-        AutoKubernetesLabels true
-        RemoveKeys          kubernetes,docker
-        LineFormat          json
-        LogLevel            info
++       AutoKubernetesLabels true
++       RemoveKeys          kubernetes,docker
++       LineFormat          json
++       LogLevel            info
+
 
   parsers.conf: |
     [PARSER]
