@@ -1,0 +1,343 @@
+---
+# ServiceAccount for Fluent Bit
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: monitoring
+  labels:
+    app: fluent-bit
+---
+# ClusterRole with necessary permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+  labels:
+    app: fluent-bit
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - nodes
+      - nodes/proxy
+    verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding to bind the role to service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+  labels:
+    app: fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: fluent-bit
+    namespace: monitoring
+---
+# ConfigMap containing Fluent Bit configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: monitoring
+  labels:
+    app: fluent-bit
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+        Health_Check  On
+
+    # Kubernetes metadata input
+    [INPUT]
+        Name                tail
+        Path                /var/log/containers/*.log
+        multiline.parser    docker, cri
+        Tag                 kube.*
+        Mem_Buf_Limit       50MB
+        Skip_Long_Lines     On
+        Skip_Empty_Lines    On
+        Refresh_Interval    10
+
+    # System logs input
+    [INPUT]
+        Name                systemd
+        Tag                 systemd.*
+        Systemd_Filter      _SYSTEMD_UNIT=kubelet.service
+        Systemd_Filter      _SYSTEMD_UNIT=docker.service
+        Systemd_Filter      _SYSTEMD_UNIT=containerd.service
+
+    # Kubernetes metadata enrichment
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Kube_Tag_Prefix     kube.var.log.containers.
+        Merge_Log           On
+        Merge_Log_Key       log_processed
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+        Annotations         Off
+        Labels              On
+
+    # Add hostname
+    [FILTER]
+        Name                modify
+        Match               *
+        Add                 hostname ${HOSTNAME}
+
+
+    # Output: Send to Loki
+
+    [OUTPUT]
+        Name                loki
+        Match               *
+        http_host           loki.monitoring.svc.cluster.local
+        http_port           3100
+        http_path           /loki/api/v1/push
+        tenant_id           ""
+        line_format         json
+        log_level           info
+        auto_kubernetes_labels on
+        remove_keys         kubernetes,docker
+        label_keys          hostname,kubernetes_namespace,kubernetes_pod_name
+        labels              agent=fluent-bit
+
+  parsers.conf: |
+    [PARSER]
+        Name   apache
+        Format regex
+        Regex  ^(?<host>[^ ]*) [^ ]* (?<user>[^ ]*) $$(?<time>[^$$]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name   apache2
+        Format regex
+        Regex  ^(?<host>[^ ]*) [^ ]* (?<user>[^ ]*) $$(?<time>[^$$]*)\] "(?<method>\S+)(?: +(?<path>[^ ]*) +\S*)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name   apache_error
+        Format regex
+        Regex  ^$$[^ ]* (?<time>[^$$]*)\] $$(?<level>[^$$]*)\](?: $$pid (?<pid>[^$$]*)\])?( $$client (?<client>[^$$]*)\])? (?<message>.*)$
+
+    [PARSER]
+        Name   nginx
+        Format regex
+        Regex ^(?<remote>[^ ]*) (?<host>[^ ]*) (?<user>[^ ]*) $$(?<time>[^$$]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*)(?: "(?<referer>[^\"]*)" "(?<agent>[^\"]*)")?$
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name   json
+        Format json
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%LZ
+
+    [PARSER]
+        Name    k8s-nginx-ingress
+        Format  regex
+        Regex   ^(?<host>[^ ]*) - (?<user>[^ ]*) $$(?<time>[^$$]*)\] "(?<method>\S+)(?: +(?<path>[^\"]*?)(?: +\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*) "(?<referer>[^\"]*)" "(?<agent>[^\"]*)" (?<request_length>[^ ]*) (?<request_time>[^ ]*) $$(?<proxy_upstream_name>[^ ]*)$$ $$(?<proxy_alternative_upstream_name>[^ ]*)$$ (?<upstream_addr>[^ ]*) (?<upstream_response_length>[^ ]*) (?<upstream_response_time>[^ ]*) (?<upstream_status>[^ ]*) (?<reg_id>[^ ]*).*$
+        Time_Key time
+        Time_Format %d/%b/%Y:%H:%M:%S %z
+
+    [PARSER]
+        Name cri
+        Format regex
+        Regex ^(?<time>[^ ]+) (?<stream>stdout|stderr) (?<logtag>[^ ]*) (?<message>.*)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+---
+# Service for Fluent Bit metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: fluent-bit-metrics
+  namespace: monitoring
+  labels:
+    app: fluent-bit
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "2020"
+    prometheus.io/path: "/api/v1/metrics/prometheus"
+spec:
+  selector:
+    app: fluent-bit
+  ports:
+    - name: http-metrics
+      port: 2020
+      targetPort: 2020
+      protocol: TCP
+    - name: prometheus
+      port: 2021
+      targetPort: 2021
+      protocol: TCP
+  type: ClusterIP
+---
+# DaemonSet for Fluent Bit
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: monitoring
+  labels:
+    app: fluent-bit
+    version: v1.9.0
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+        version: v1.9.0
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "2020"
+        prometheus.io/path: "/api/v1/metrics/prometheus"
+        fluentbit.io/exclude: "true"
+    spec:
+      serviceAccountName: fluent-bit
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
+      tolerations:
+        # Allow scheduling on control plane nodes
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        # Handle node not ready and unreachable taints
+        - key: node.kubernetes.io/not-ready
+          effect: NoExecute
+          tolerationSeconds: 300
+        - key: node.kubernetes.io/unreachable
+          effect: NoExecute
+          tolerationSeconds: 300
+      containers:
+        - name: fluent-bit
+          image: grafana/fluent-bit-plugin-loki:3.0.0-amd64
+          imagePullPolicy: Always
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: http
+              containerPort: 2020
+              protocol: TCP
+            - name: prometheus
+              containerPort: 2021
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 2020
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 2020
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: runlogjournal
+              mountPath: /run/log/journal
+              readOnly: true
+            - name: machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: etcssl
+              mountPath: /etc/ssl/certs
+              readOnly: true
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: fluent-bit-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+            type: Directory
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+            type: DirectoryOrCreate
+        - name: runlogjournal
+          hostPath:
+            path: /run/log/journal
+            type: DirectoryOrCreate
+        - name: machine-id
+          hostPath:
+            path: /etc/machine-id
+            type: FileOrCreate
+        - name: tmp
+          emptyDir: {}
+        - name: etcssl
+          hostPath:
+            path: /etc/ssl/certs
+            type: DirectoryOrCreate
+
