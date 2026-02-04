@@ -367,6 +367,10 @@ spec:
             - -c
             - |
               set -e
+              echo "Installing build dependencies..."
+              apt-get update && apt-get install -y --no-install-recommends \
+                build-essential \
+                && rm -rf /var/lib/apt/lists/*
               echo "Installing required Fluentd plugins..."
               # Install plugins and ensure they complete successfully
               gem install fluent-plugin-grafana-loki -v 1.2.20 --no-document
