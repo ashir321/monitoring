@@ -43,10 +43,13 @@ data:
         flush_on_shutdown: true
         replay_memory_ceiling: 1GB
       lifecycler:
+        address: 127.0.0.1
         ring:
           kvstore:
             store: inmemory
           replication_factor: 1
+          zone_awareness_enabled: false
+        availability_zone: local
         final_sleep: 0s
       chunk_idle_period: 30m
       max_chunk_age: 1h
@@ -135,6 +138,9 @@ data:
       retention_delete_worker_count: 150
       delete_request_store: filesystem
       delete_request_cancel_period: 24h
+      # Marks directory for tracking cleanup state
+      apply_retention_interval: 1h
+      max_compaction_parallelism: 1
 
     ruler:
       alertmanager_url: http://localhost:9093
