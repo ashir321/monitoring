@@ -1,0 +1,479 @@
+---
+# ServiceAccount for Fluentd
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: monitoring
+  labels:
+    app: fluentd
+---
+# ClusterRole with necessary permissions for Kubernetes metadata
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluentd
+  labels:
+    app: fluentd
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - nodes
+    verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluentd
+  labels:
+    app: fluentd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fluentd
+subjects:
+  - kind: ServiceAccount
+    name: fluentd
+    namespace: monitoring
+---
+# ConfigMap for Fluentd configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: monitoring
+  labels:
+    app: fluentd
+data:
+  fluent.conf: |
+    # Fluentd configuration for Kubernetes log collection
+    # Sends logs to Grafana Loki with proper labels
+
+    # ============================================
+    # SYSTEM CONFIGURATION
+    # ============================================
+    <system>
+      log_level info
+      <log>
+        format json
+        time_format %Y-%m-%dT%H:%M:%S.%NZ
+      </log>
+    </system>
+
+    # ============================================
+    # INPUT: Kubernetes Container Logs
+    # ============================================
+    <source>
+      @type tail
+      @id in_tail_container_logs
+      path /var/log/containers/*.log
+      pos_file /var/log/fluentd-containers.log.pos
+      tag kubernetes.*
+      read_from_head true
+      refresh_interval 5
+      rotate_wait 5
+      enable_stat_watcher false
+      # Parse CRI/containerd log format
+      <parse>
+        @type regexp
+        expression /^(?<time>.+?) (?<stream>stdout|stderr) (?<logtag>[FP]) (?<log>.*)$/
+        time_format %Y-%m-%dT%H:%M:%S.%N%:z
+        keep_time_key true
+      </parse>
+    </source>
+
+    # ============================================
+    # INPUT: Systemd Logs (kubelet, containerd)
+    # ============================================
+    <source>
+      @type systemd
+      @id in_systemd_kubelet
+      tag systemd.kubelet
+      path /var/log/journal
+      matches [{ "_SYSTEMD_UNIT": "kubelet.service" }]
+      read_from_head false
+      <storage>
+        @type local
+        path /var/log/fluentd-journald-kubelet.pos
+      </storage>
+      <entry>
+        fields_strip_underscores true
+        fields_lowercase true
+      </entry>
+    </source>
+
+    <source>
+      @type systemd
+      @id in_systemd_containerd
+      tag systemd.containerd
+      path /var/log/journal
+      matches [{ "_SYSTEMD_UNIT": "containerd.service" }]
+      read_from_head false
+      <storage>
+        @type local
+        path /var/log/fluentd-journald-containerd.pos
+      </storage>
+      <entry>
+        fields_strip_underscores true
+        fields_lowercase true
+      </entry>
+    </source>
+
+    # ============================================
+    # FILTER: Kubernetes Metadata Enrichment
+    # ============================================
+    <filter kubernetes.**>
+      @type kubernetes_metadata
+      @id filter_kube_metadata
+      kubernetes_url "https://kubernetes.default.svc:443"
+      verify_ssl true
+      ca_file /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      bearer_token_file /var/run/secrets/kubernetes.io/serviceaccount/token
+      skip_labels false
+      skip_container_metadata false
+      skip_master_url false
+      skip_namespace_metadata false
+      watch true
+      cache_size 1000
+      cache_ttl 3600
+    </filter>
+
+    # ============================================
+    # FILTER: Add custom fields
+    # ============================================
+    <filter kubernetes.**>
+      @type record_transformer
+      @id filter_add_fields
+      enable_ruby true
+      <record>
+        # Extract clean values for Loki labels
+        namespace ${record.dig("kubernetes", "namespace_name") || "unknown"}
+        pod ${record.dig("kubernetes", "pod_name") || "unknown"}
+        container ${record.dig("kubernetes", "container_name") || "unknown"}
+        node ${record.dig("kubernetes", "host") || ENV["NODE_NAME"] || "unknown"}
+        app ${record.dig("kubernetes", "labels", "app") || record.dig("kubernetes", "labels", "app.kubernetes.io/name") || "unknown"}
+        # Flatten the log message
+        message ${record["log"] || record["message"] || record.to_json}
+      </record>
+      remove_keys $.kubernetes.pod_id,$.kubernetes.master_url,$.kubernetes.namespace_id
+    </filter>
+
+    # ============================================
+    # FILTER: Process systemd logs
+    # ============================================
+    <filter systemd.**>
+      @type record_transformer
+      @id filter_systemd_add_fields
+      enable_ruby true
+      <record>
+        namespace "kube-system"
+        pod ${record["systemd_unit"] || "systemd"}
+        container ${record["systemd_unit"] || "systemd"}
+        node ${ENV["NODE_NAME"] || "unknown"}
+        app "systemd"
+        message ${record["message"] || record.to_json}
+      </record>
+    </filter>
+
+    # ============================================
+    # OUTPUT: Send to Loki
+    # ============================================
+    <match kubernetes.**>
+      @type loki
+      @id out_loki_kubernetes
+      url "http://loki.monitoring.svc.cluster.local:3100"
+      flush_interval 5s
+      flush_at_shutdown true
+      buffer_chunk_limit 1m
+
+      # Extra labels to add to every log line
+      extra_labels {"job":"fluentd"}
+
+      # Extract labels from record - these become Loki labels
+      <label>
+        namespace
+        pod
+        container
+        node
+        app
+        stream
+      </label>
+
+      # Buffer configuration for reliability
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffer/kubernetes
+        flush_mode interval
+        flush_interval 5s
+        flush_thread_count 2
+        retry_type exponential_backoff
+        retry_wait 1s
+        retry_max_interval 60s
+        retry_forever true
+        chunk_limit_size 8MB
+        queue_limit_length 32
+        overflow_action block
+        total_limit_size 512MB
+      </buffer>
+    </match>
+
+    <match systemd.**>
+      @type loki
+      @id out_loki_systemd
+      url "http://loki.monitoring.svc.cluster.local:3100"
+      flush_interval 5s
+      flush_at_shutdown true
+      buffer_chunk_limit 1m
+
+      extra_labels {"job":"systemd"}
+
+      <label>
+        namespace
+        pod
+        container
+        node
+        app
+      </label>
+
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffer/systemd
+        flush_mode interval
+        flush_interval 5s
+        flush_thread_count 1
+        retry_type exponential_backoff
+        retry_wait 1s
+        retry_max_interval 60s
+        retry_forever true
+        chunk_limit_size 8MB
+        queue_limit_length 16
+        overflow_action block
+        total_limit_size 256MB
+      </buffer>
+    </match>
+
+    # ============================================
+    # HEALTH CHECK INPUT
+    # ============================================
+    <source>
+      @type http
+      @id in_http_health
+      port 9880
+      bind 0.0.0.0
+    </source>
+
+    # Prometheus metrics endpoint
+    <source>
+      @type prometheus
+      @id in_prometheus
+      bind 0.0.0.0
+      port 24231
+      metrics_path /metrics
+    </source>
+
+    <source>
+      @type prometheus_monitor
+      @id in_prometheus_monitor
+    </source>
+
+    <source>
+      @type prometheus_output_monitor
+      @id in_prometheus_output_monitor
+    </source>
+---
+# Service for Fluentd metrics and health
+apiVersion: v1
+kind: Service
+metadata:
+  name: fluentd
+  namespace: monitoring
+  labels:
+    app: fluentd
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "24231"
+    prometheus.io/path: "/metrics"
+spec:
+  selector:
+    app: fluentd
+  ports:
+    - name: http-health
+      port: 9880
+      targetPort: 9880
+      protocol: TCP
+    - name: prometheus
+      port: 24231
+      targetPort: 24231
+      protocol: TCP
+  type: ClusterIP
+---
+# DaemonSet for Fluentd
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: monitoring
+  labels:
+    app: fluentd
+    version: v1.17
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: fluentd
+        version: v1.17
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "24231"
+        prometheus.io/path: "/metrics"
+        fluentd.io/exclude: "true"
+    spec:
+      serviceAccountName: fluentd
+      priorityClassName: system-node-critical
+      tolerations:
+        # Allow scheduling on control plane nodes
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        # Handle node taints
+        - key: node.kubernetes.io/not-ready
+          effect: NoExecute
+          tolerationSeconds: 300
+        - key: node.kubernetes.io/unreachable
+          effect: NoExecute
+          tolerationSeconds: 300
+        - key: node.kubernetes.io/disk-pressure
+          effect: NoSchedule
+        - key: node.kubernetes.io/memory-pressure
+          effect: NoSchedule
+      initContainers:
+        # Install required plugins
+        - name: install-plugins
+          image: fluent/fluentd:v1.17-debian-1
+          command:
+            - sh
+            - -c
+            - |
+              fluent-gem install fluent-plugin-grafana-loki -v 1.2.20 --no-document && \
+              fluent-gem install fluent-plugin-kubernetes_metadata_filter -v 3.4.0 --no-document && \
+              fluent-gem install fluent-plugin-systemd -v 1.0.5 --no-document && \
+              fluent-gem install fluent-plugin-prometheus -v 2.1.0 --no-document && \
+              cp -r /usr/lib/ruby/gems/*/gems/* /plugins/ 2>/dev/null || true && \
+              cp -r /home/fluent/.fluent/plugin/gems/* /plugins/ 2>/dev/null || true && \
+              echo "Plugins installed successfully"
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+          securityContext:
+            runAsUser: 0
+      containers:
+        - name: fluentd
+          image: fluent/fluentd:v1.17-debian-1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Copy plugins to the correct location
+              mkdir -p /home/fluent/.fluent/plugins
+              cp -r /plugins/* /home/fluent/.fluent/plugins/ 2>/dev/null || true
+              # Install plugins if not already present
+              fluent-gem install fluent-plugin-grafana-loki -v 1.2.20 --no-document 2>/dev/null || true
+              fluent-gem install fluent-plugin-kubernetes_metadata_filter -v 3.4.0 --no-document 2>/dev/null || true
+              fluent-gem install fluent-plugin-systemd -v 1.0.5 --no-document 2>/dev/null || true
+              fluent-gem install fluent-plugin-prometheus -v 2.1.0 --no-document 2>/dev/null || true
+              # Start fluentd
+              exec fluentd -c /fluentd/etc/fluent.conf -v
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: FLUENT_UID
+              value: "0"
+          ports:
+            - name: http-health
+              containerPort: 9880
+              protocol: TCP
+            - name: prometheus
+              containerPort: 24231
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /fluentd.healthcheck?json=%7B%22ping%22%3A+%22pong%22%7D
+              port: 9880
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /fluentd.healthcheck?json=%7B%22ping%22%3A+%22pong%22%7D
+              port: 9880
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /fluentd/etc
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: runlogjournal
+              mountPath: /run/log/journal
+              readOnly: true
+            - name: machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: plugins
+              mountPath: /plugins
+              readOnly: true
+            - name: buffer
+              mountPath: /var/log/fluentd-buffer
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: config
+          configMap:
+            name: fluentd-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+            type: Directory
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+            type: DirectoryOrCreate
+        - name: runlogjournal
+          hostPath:
+            path: /run/log/journal
+            type: DirectoryOrCreate
+        - name: machine-id
+          hostPath:
+            path: /etc/machine-id
+            type: FileOrCreate
+        - name: plugins
+          emptyDir: {}
+        - name: buffer
+          emptyDir:
+            sizeLimit: 1Gi
