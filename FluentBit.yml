@@ -114,23 +114,24 @@ data:
         Copy                hostname host
 
     [OUTPUT]
-        Name                grafana-loki
+        Name                loki
         Match               kube.*
-        Url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
-        Labels              {job="fluent-bit"}
-        LabelKeys           namespace,pod,container,node,host
-        AutoKubernetesLabels false
-        DropSingleKey       true
-        LineFormat          json
-        RetryLimit          5
+        Host                loki.monitoring.svc.cluster.local
+        Port                3100
+        Labels              job=fluent-bit
+        Label_Keys          $namespace, $pod, $container, $node, $host
+        Line_Format         json
+        Auto_Kubernetes_Labels on
+        Retry_Limit         5
 
     [OUTPUT]
-        Name                grafana-loki
+        Name                loki
         Match               systemd.*
-        Url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
-        Labels              {job="systemd"}
-        LineFormat          json
-        RetryLimit          5
+        Host                loki.monitoring.svc.cluster.local
+        Port                3100
+        Labels              job=systemd
+        Line_Format         json
+        Retry_Limit         5
 
   parsers.conf: |
     [PARSER]
@@ -224,7 +225,7 @@ spec:
           tolerationSeconds: 300
       containers:
         - name: fluent-bit
-          image: grafana/fluent-bit-plugin-loki:3.0.0-amd64
+          image: fluent/fluent-bit:3.0
           imagePullPolicy: Always
           env:
             - name: HOSTNAME
