@@ -139,6 +139,7 @@ data:
       watch true
       cache_size 1000
       cache_ttl 3600
+      node_name "#{ENV['K8S_NODE_NAME']}"
     </filter>
 
     # ============================================
@@ -384,6 +385,10 @@ spec:
               exec fluentd -c /fluentd/etc/fluent.conf
           env:
             - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: K8S_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
