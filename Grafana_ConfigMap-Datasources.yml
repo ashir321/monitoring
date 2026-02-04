@@ -21,3 +21,5 @@ data:
         editable: true
         jsonData:
           maxLines: 1000
+          timeout: 60
+          derivedFields: []
