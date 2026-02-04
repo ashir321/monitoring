@@ -57,6 +57,9 @@ data:
     # ============================================
     <system>
       log_level info
+      # Disable filter chain optimization to prevent memory corruption
+      # when using record_transformer with enable_ruby (uses filter_stream)
+      disable_filter_chain_optimization true
       <log>
         format json
         time_format %Y-%m-%dT%H:%M:%S.%NZ
