@@ -120,7 +120,7 @@ data:
         Labels              {job="fluent-bit"}
         LabelKeys           namespace,pod,container,node,host
         AutoKubernetesLabels false
-        DropSingleKey       on
+        DropSingleKey       true
         LineFormat          json
         RetryLimit          5
 
