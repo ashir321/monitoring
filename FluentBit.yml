@@ -119,7 +119,7 @@ data:
         Url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
         Labels              {job="fluent-bit"}
         LabelKeys           namespace,pod,container,node,host
-        AutoKubernetesLabels off
+        AutoKubernetesLabels false
         DropSingleKey       on
         LineFormat          json
         RetryLimit          5
