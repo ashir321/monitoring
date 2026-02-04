@@ -1,0 +1,295 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+data:
+  kubernetes-alerts.yml: |
+    groups:
+      - name: kubernetes-nodes
+        rules:
+          # Node is not ready
+          - alert: KubernetesNodeNotReady
+            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Kubernetes node not ready ({{ $labels.node }})"
+              description: "Node {{ $labels.node }} has been unready for more than 5 minutes."
+
+          # Node memory pressure
+          - alert: KubernetesNodeMemoryPressure
+            expr: kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes node memory pressure ({{ $labels.node }})"
+              description: "Node {{ $labels.node }} has memory pressure."
+
+          # Node disk pressure
+          - alert: KubernetesNodeDiskPressure
+            expr: kube_node_status_condition{condition="DiskPressure",status="true"} == 1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes node disk pressure ({{ $labels.node }})"
+              description: "Node {{ $labels.node }} has disk pressure."
+
+          # Node PID pressure
+          - alert: KubernetesNodePIDPressure
+            expr: kube_node_status_condition{condition="PIDPressure",status="true"} == 1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes node PID pressure ({{ $labels.node }})"
+              description: "Node {{ $labels.node }} has PID pressure."
+
+      - name: kubernetes-pods
+        rules:
+          # Pod crash looping
+          - alert: KubernetesPodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total[1h]) > 3
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes pod crash looping ({{ $labels.namespace }}/{{ $labels.pod }})"
+              description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is restarting frequently."
+
+          # Pod not ready
+          - alert: KubernetesPodNotReady
+            expr: sum by (namespace, pod) (kube_pod_status_phase{phase=~"Pending|Unknown"}) > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes pod not ready ({{ $labels.namespace }}/{{ $labels.pod }})"
+              description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been in a non-ready state for more than 15 minutes."
+
+          # Container OOMKilled
+          - alert: KubernetesContainerOOMKilled
+            expr: kube_pod_container_status_last_terminated_reason{reason="OOMKilled"} == 1
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Container OOM killed ({{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }})"
+              description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} was OOMKilled."
+
+      - name: kubernetes-deployments
+        rules:
+          # Deployment replicas mismatch
+          - alert: KubernetesDeploymentReplicasMismatch
+            expr: kube_deployment_spec_replicas != kube_deployment_status_replicas_available
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes deployment replicas mismatch ({{ $labels.namespace }}/{{ $labels.deployment }})"
+              description: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has {{ $value }} replica mismatch."
+
+          # StatefulSet replicas mismatch
+          - alert: KubernetesStatefulSetReplicasMismatch
+            expr: kube_statefulset_status_replicas_ready != kube_statefulset_status_replicas
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Kubernetes StatefulSet replicas mismatch ({{ $labels.namespace }}/{{ $labels.statefulset }})"
+              description: "StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has {{ $value }} replica mismatch."
+
+      - name: kubernetes-resources
+        rules:
+          # High CPU usage on pod
+          - alert: KubernetesPodHighCPU
+            expr: sum(rate(container_cpu_usage_seconds_total{container!=""}[5m])) by (namespace, pod) / sum(kube_pod_container_resource_requests{resource="cpu"}) by (namespace, pod) * 100 > 90
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage on pod ({{ $labels.namespace }}/{{ $labels.pod }})"
+              description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} CPU usage is above 90% of requested."
+
+          # High memory usage on pod
+          - alert: KubernetesPodHighMemory
+            expr: sum(container_memory_working_set_bytes{container!=""}) by (namespace, pod) / sum(kube_pod_container_resource_requests{resource="memory"}) by (namespace, pod) * 100 > 90
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage on pod ({{ $labels.namespace }}/{{ $labels.pod }})"
+              description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} memory usage is above 90% of requested."
+
+          # PVC almost full
+          - alert: KubernetesPVCAlmostFull
+            expr: kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes * 100 > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PVC almost full ({{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }})"
+              description: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} is {{ $value | printf \"%.2f\" }}% full."
+
+  node-alerts.yml: |
+    groups:
+      - name: node-exporter
+        rules:
+          # High CPU usage
+          - alert: NodeHighCPUUsage
+            expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} CPU usage is above 80% for more than 10 minutes. Current value: {{ $value | printf \"%.2f\" }}%"
+
+          # High memory usage
+          - alert: NodeHighMemoryUsage
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} memory usage is above 85%. Current value: {{ $value | printf \"%.2f\" }}%"
+
+          # Critical memory usage
+          - alert: NodeCriticalMemoryUsage
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 95
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critical memory usage on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} memory usage is above 95%. Current value: {{ $value | printf \"%.2f\" }}%"
+
+          # Disk space running low
+          - alert: NodeDiskSpaceLow
+            expr: (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) * 100 < 15
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Low disk space on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} disk {{ $labels.mountpoint }} has less than 15% free space. Current value: {{ $value | printf \"%.2f\" }}%"
+
+          # Disk space critical
+          - alert: NodeDiskSpaceCritical
+            expr: (node_filesystem_avail_bytes{fstype=~"ext4|xfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs"}) * 100 < 5
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critical disk space on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} disk {{ $labels.mountpoint }} has less than 5% free space. Current value: {{ $value | printf \"%.2f\" }}%"
+
+          # Node down
+          - alert: NodeDown
+            expr: up{job="node-exporter"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node exporter down ({{ $labels.instance }})"
+              description: "Node exporter on {{ $labels.instance }} is not responding."
+
+          # High disk I/O
+          - alert: NodeHighDiskIO
+            expr: rate(node_disk_io_time_seconds_total[5m]) > 0.8
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High disk I/O on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} disk {{ $labels.device }} is experiencing high I/O."
+
+          # Network receive errors
+          - alert: NodeNetworkReceiveErrors
+            expr: rate(node_network_receive_errs_total[5m]) > 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Network receive errors on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} interface {{ $labels.device }} is experiencing receive errors."
+
+          # Network transmit errors
+          - alert: NodeNetworkTransmitErrors
+            expr: rate(node_network_transmit_errs_total[5m]) > 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Network transmit errors on node ({{ $labels.instance }})"
+              description: "Node {{ $labels.instance }} interface {{ $labels.device }} is experiencing transmit errors."
+
+  monitoring-stack-alerts.yml: |
+    groups:
+      - name: monitoring-stack
+        rules:
+          # Prometheus target down
+          - alert: PrometheusTargetDown
+            expr: up == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Prometheus target down ({{ $labels.job }})"
+              description: "Target {{ $labels.instance }} in job {{ $labels.job }} is down."
+
+          # Prometheus configuration reload failed
+          - alert: PrometheusConfigReloadFailed
+            expr: prometheus_config_last_reload_successful == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Prometheus configuration reload failed"
+              description: "Prometheus failed to reload configuration."
+
+          # Prometheus alerting rule failures
+          - alert: PrometheusAlertingRuleFailures
+            expr: increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Prometheus alerting rule failures"
+              description: "Prometheus has {{ $value }} alerting rule evaluation failures."
+
+          # AlertManager down
+          - alert: AlertManagerDown
+            expr: up{job="alertmanager"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "AlertManager is down"
+              description: "AlertManager is not responding."
+
+          # Loki down
+          - alert: LokiDown
+            expr: up{job="loki"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Loki is down"
+              description: "Loki log aggregation service is not responding."
+
+          # Grafana down
+          - alert: GrafanaDown
+            expr: up{job="grafana"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Grafana is down"
+              description: "Grafana dashboard service is not responding."

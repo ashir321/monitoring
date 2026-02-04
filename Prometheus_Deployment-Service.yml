@@ -36,13 +36,19 @@ spec:
               memory: 2Gi
           volumeMounts:
             - name: config
-              mountPath: /etc/prometheus
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: rules
+              mountPath: /etc/prometheus/rules
             - name: storage
               mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-alert-rules
         - name: storage
           emptyDir: {}
 ---
