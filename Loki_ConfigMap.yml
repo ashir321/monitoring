@@ -43,7 +43,7 @@ data:
         flush_on_shutdown: true
         replay_memory_ceiling: 1GB
       lifecycler:
-        address: 127.0.0.1
+        #address: 127.0.0.1
         ring:
           kvstore:
             store: inmemory
