@@ -95,6 +95,9 @@ data:
       # Split queries for performance
       split_queries_by_interval: 15m
 
+      # Query timeout (moved from querier.engine.timeout)
+      query_timeout: 5m
+
       # Discovery
       allow_structured_metadata: true
 
@@ -153,8 +156,6 @@ data:
     querier:
       max_concurrent: 20
       query_ingesters_within: 3h
-      engine:
-        timeout: 5m
 
     query_scheduler:
       max_outstanding_requests_per_tenant: 4096

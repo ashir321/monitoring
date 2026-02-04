@@ -380,6 +380,8 @@ spec:
       containers:
         - name: fluentd
           image: fluent/fluentd:v1.17-debian-1
+          securityContext:
+            runAsUser: 0
           command:
             - /bin/sh
             - -c
