@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+  labels:
+    app: alertmanager
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      # SMTP settings for email notifications (configure as needed)
+      # smtp_smarthost: 'smtp.example.com:587'
+      # smtp_from: 'alertmanager@example.com'
+      # smtp_auth_username: 'alertmanager'
+      # smtp_auth_password: 'password'
+
+    # The root route - all alerts enter here
+    route:
+      # Default receiver
+      receiver: 'default-receiver'
+      # Group alerts by these labels
+      group_by: ['alertname', 'namespace', 'severity']
+      # Wait before sending initial notification for a group
+      group_wait: 30s
+      # Wait before sending updated notification for a group
+      group_interval: 5m
+      # Wait before resending notification if it hasn't changed
+      repeat_interval: 4h
+
+      # Child routes for different severity levels
+      routes:
+        # Critical alerts - shorter intervals
+        - match:
+            severity: critical
+          receiver: 'critical-receiver'
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1h
+
+        # Warning alerts
+        - match:
+            severity: warning
+          receiver: 'warning-receiver'
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+
+        # Info/low priority alerts
+        - match:
+            severity: info
+          receiver: 'default-receiver'
+          group_wait: 1m
+          group_interval: 10m
+          repeat_interval: 12h
+
+    # Inhibition rules - suppress alerts when a more severe alert is firing
+    inhibit_rules:
+      # If a critical alert is firing, suppress warning alerts for the same alertname
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname', 'namespace']
+
+      # If a warning alert is firing, suppress info alerts for the same alertname
+      - source_match:
+          severity: 'warning'
+        target_match:
+          severity: 'info'
+        equal: ['alertname', 'namespace']
+
+    # Receivers - define notification channels
+    receivers:
+      - name: 'default-receiver'
+        # Webhook receiver (can be configured for various integrations)
+        # webhook_configs:
+        #   - url: 'http://webhook-receiver:5001/'
+        #     send_resolved: true
+
+      - name: 'critical-receiver'
+        # Configure critical notifications (email, PagerDuty, Slack, etc.)
+        # email_configs:
+        #   - to: 'oncall@example.com'
+        #     send_resolved: true
+        # pagerduty_configs:
+        #   - service_key: '<your-pagerduty-key>'
+        #     send_resolved: true
+        # slack_configs:
+        #   - api_url: 'https://hooks.slack.com/services/xxx/yyy/zzz'
+        #     channel: '#alerts-critical'
+        #     send_resolved: true
+
+      - name: 'warning-receiver'
+        # Configure warning notifications
+        # slack_configs:
+        #   - api_url: 'https://hooks.slack.com/services/xxx/yyy/zzz'
+        #     channel: '#alerts-warning'
+        #     send_resolved: true
+
+    # Templates for notification formatting
+    templates:
+      - '/etc/alertmanager/templates/*.tmpl'
