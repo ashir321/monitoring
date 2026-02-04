@@ -116,23 +116,21 @@ data:
     [OUTPUT]
         Name                grafana-loki
         Match               kube.*
-        Host                loki.monitoring.svc.cluster.local
-        Port                3100
-        Labels              job=fluent-bit
-        Label_Keys          namespace,pod,container,node,host
-        Auto_Kubernetes_Labels off
-        Drop_Single_Key     on
-        Line_Format         json
-        Retry_Limit         5
+        Url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+        Labels              {job="fluent-bit"}
+        LabelKeys           namespace,pod,container,node,host
+        AutoKubernetesLabels off
+        DropSingleKey       on
+        LineFormat          json
+        RetryLimit          5
 
     [OUTPUT]
         Name                grafana-loki
         Match               systemd.*
-        Host                loki.monitoring.svc.cluster.local
-        Port                3100
-        Labels              job=systemd
-        Line_Format         json
-        Retry_Limit         5
+        Url                 http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+        Labels              {job="systemd"}
+        LineFormat          json
+        RetryLimit          5
 
   parsers.conf: |
     [PARSER]
