@@ -2219,7 +2219,7 @@ data:
   "uid": "e1RXnCbVz",
   "version": 10,
   "weekStart": ""
-}
+   }
   kubernetes-cluster.json: |
     {
       "annotations": {
