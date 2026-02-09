@@ -338,25 +338,27 @@ spec:
         version: v1.17
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "24231"
-        prometheus.io/path: "/metrics"
-        fluentd.io/exclude: "true"
-    spec:
-      serviceAccountName: fluentd
-      priorityClassName: system-node-critical
-      tolerations:
-        # Allow scheduling on control plane nodes
-        - key: node-role.kubernetes.io/control-plane
-          effect: NoSchedule
-        - key: node-role.kubernetes.io/master
-          effect: NoSchedule
-        # Handle node taints
-        - key: node.kubernetes.io/not-ready
+          volumeMounts:
+            - name: config
+              mountPath: /fluentd/etc
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+            - name: runlogjournal
+              mountPath: /run/log/journal
+              readOnly: true
+            - name: machine-id
+              mountPath: /etc/machine-id
+              readOnly: true
+            - name: buffer
+              mountPath: /var/log/fluentd-buffer
+              subPath: fluentd-buffer
           effect: NoExecute
-          tolerationSeconds: 300
-        - key: node.kubernetes.io/unreachable
-          effect: NoExecute
-          tolerationSeconds: 300
+      terminationGracePeriodSeconds: 180
+      restartPolicy: Always
         - key: node.kubernetes.io/disk-pressure
           effect: NoSchedule
         - key: node.kubernetes.io/memory-pressure
@@ -377,9 +379,19 @@ spec:
                 && rm -rf /var/lib/apt/lists/*
               echo "Installing required Fluentd plugins..."
               # Install plugins and ensure they complete successfully
-              gem install fluent-plugin-grafana-loki -v 1.2.20 --no-document
-              gem install fluent-plugin-kubernetes_metadata_filter -v 3.4.0 --no-document
-              gem install fluent-plugin-systemd -v 1.0.5 --no-document
+        - name: buffer
+          persistentVolumeClaim:
+            claimName: fluentd-buffer-pvc
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - fluentd
+              topologyKey: kubernetes.io/hostname
               gem install fluent-plugin-prometheus -v 2.1.0 --no-document
               echo "All plugins installed successfully"
               # List installed plugins for debugging
