@@ -75,7 +75,7 @@ data:
 
       # Query limits
       max_entries_limit_per_query: 10000
-      max_query_length: 361h
+      max_query_length: 360h
       max_query_parallelism: 32
 
       # Label limits - IMPORTANT for Fluentd labels
