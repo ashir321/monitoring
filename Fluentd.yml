@@ -126,6 +126,45 @@ data:
     </source>
 
     # ============================================
+    # FILTER: Exclude Fluentd own logs (prevent feedback loop)
+    # ============================================
+    <filter kubernetes.**>
+      @type grep
+      @id filter_exclude_fluentd
+      <exclude>
+        key $.kubernetes.container_name
+        pattern /^fluentd$/
+      </exclude>
+    </filter>
+
+    # ============================================
+    # FILTER: Exclude common health check / noise logs
+    # ============================================
+    <filter kubernetes.**>
+      @type grep
+      @id filter_exclude_noise
+      <exclude>
+        key log
+        pattern /healthcheck|health_check|readiness|liveness|kube-probe|\/healthz|\/readyz|\/livez/
+      </exclude>
+    </filter>
+
+    # ============================================
+    # FILTER: Concatenate multi-line exception stack traces
+    # ============================================
+    <filter kubernetes.**>
+      @type concat
+      @id filter_concat_multiline
+      key log
+      multiline_start_regexp /^\S/
+      multiline_end_regexp /\n$/
+      separator ""
+      flush_interval 5
+      timeout_label @NORMAL
+      use_first_timestamp true
+    </filter>
+
+    # ============================================
     # FILTER: Kubernetes Metadata Enrichment
     # ============================================
     <filter kubernetes.**>
@@ -143,6 +182,18 @@ data:
       cache_size 1000
       cache_ttl 3600
       node_name "#{ENV['K8S_NODE_NAME']}"
+    </filter>
+
+    # ============================================
+    # FILTER: Detect log level from message content
+    # ============================================
+    <filter kubernetes.**>
+      @type record_transformer
+      @id filter_detect_level
+      enable_ruby true
+      <record>
+        level ${if record["log"].to_s.match?(/\b(FATAL|PANIC)\b/i); "critical"; elsif record["log"].to_s.match?(/\bERROR\b/i); "error"; elsif record["log"].to_s.match?(/\bWARN(ING)?\b/i); "warning"; elsif record["log"].to_s.match?(/\bDEBUG\b/i); "debug"; elsif record["log"].to_s.match?(/\bTRACE\b/i); "trace"; else "info"; end}
+      </record>
     </filter>
 
     # ============================================
@@ -166,6 +217,18 @@ data:
     </filter>
 
     # ============================================
+    # FILTER: Exclude kube-system noise namespaces (optional — uncomment to enable)
+    # ============================================
+    # <filter kubernetes.**>
+    #   @type grep
+    #   @id filter_exclude_kube_system
+    #   <exclude>
+    #     key namespace
+    #     pattern /^(kube-system|kube-public|kube-node-lease)$/
+    #   </exclude>
+    # </filter>
+
+    # ============================================
     # FILTER: Process systemd logs
     # ============================================
     <filter systemd.**>
@@ -178,6 +241,7 @@ data:
         container ${record["systemd_unit"] || "systemd"}
         node ${ENV["NODE_NAME"] || "unknown"}
         app "systemd"
+        level ${if record["message"].to_s.match?(/\b(FATAL|PANIC)\b/i); "critical"; elsif record["message"].to_s.match?(/\bERROR\b/i); "error"; elsif record["message"].to_s.match?(/\bWARN(ING)?\b/i); "warning"; elsif record["message"].to_s.match?(/\bDEBUG\b/i); "debug"; else "info"; end}
         message ${record["message"] || record.to_json}
       </record>
     </filter>
@@ -204,6 +268,7 @@ data:
         node
         app
         stream
+        level
       </label>
 
       # Buffer configuration for reliability
@@ -240,6 +305,7 @@ data:
         container
         node
         app
+        level
       </label>
 
       <buffer>
@@ -338,27 +404,22 @@ spec:
         version: v1.17
       annotations:
         prometheus.io/scrape: "true"
-          volumeMounts:
-            - name: config
-              mountPath: /fluentd/etc
-              readOnly: true
-            - name: varlog
-              mountPath: /var/log
-            - name: varlibdockercontainers
-              mountPath: /var/lib/docker/containers
-              readOnly: true
-            - name: runlogjournal
-              mountPath: /run/log/journal
-              readOnly: true
-            - name: machine-id
-              mountPath: /etc/machine-id
-              readOnly: true
-            - name: buffer
-              mountPath: /var/log/fluentd-buffer
-              subPath: fluentd-buffer
-          effect: NoExecute
-      terminationGracePeriodSeconds: 180
+        prometheus.io/port: "24231"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: fluentd
+      terminationGracePeriodSeconds: 60
       restartPolicy: Always
+      # Tolerations - run on ALL nodes including masters and tainted nodes
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node.kubernetes.io/not-ready
+          effect: NoExecute
+        - key: node.kubernetes.io/unreachable
+          effect: NoExecute
         - key: node.kubernetes.io/disk-pressure
           effect: NoSchedule
         - key: node.kubernetes.io/memory-pressure
@@ -379,19 +440,10 @@ spec:
                 && rm -rf /var/lib/apt/lists/*
               echo "Installing required Fluentd plugins..."
               # Install plugins and ensure they complete successfully
-        - name: buffer
-          persistentVolumeClaim:
-            claimName: fluentd-buffer-pvc
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: app
-                    operator: In
-                    values:
-                      - fluentd
-              topologyKey: kubernetes.io/hostname
+              gem install fluent-plugin-kubernetes_metadata_filter -v 3.4.0 --no-document
+              gem install fluent-plugin-grafana-loki -v 1.2.20 --no-document
+              gem install fluent-plugin-systemd -v 1.1.0 --no-document
+              gem install fluent-plugin-concat -v 2.5.0 --no-document
               gem install fluent-plugin-prometheus -v 2.1.0 --no-document
               echo "All plugins installed successfully"
               # List installed plugins for debugging
@@ -456,7 +508,6 @@ spec:
               readOnly: true
             - name: buffer
               mountPath: /var/log/fluentd-buffer
-      terminationGracePeriodSeconds: 60
       volumes:
         - name: config
           configMap:
