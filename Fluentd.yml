@@ -426,30 +426,13 @@ spec:
           effect: NoSchedule
       containers:
         - name: fluentd
+          # Use custom image with pre-installed plugins
+          # Build this image from the Dockerfile in this repository:
+          # docker build -t <your-registry>/fluentd:v1.17-custom .
+          # docker push <your-registry>/fluentd:v1.17-custom
           image: fluent/fluentd:v1.17-debian-1
           securityContext:
             runAsUser: 0
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              echo "Installing build dependencies..."
-              apt-get update && apt-get install -y --no-install-recommends \
-                build-essential \
-                && rm -rf /var/lib/apt/lists/*
-              echo "Installing required Fluentd plugins..."
-              # Install plugins and ensure they complete successfully
-              gem install fluent-plugin-kubernetes_metadata_filter -v 3.4.0 --no-document
-              gem install fluent-plugin-grafana-loki -v 1.2.20 --no-document
-              gem install fluent-plugin-systemd -v 1.1.0 --no-document
-              gem install fluent-plugin-concat -v 2.5.0 --no-document
-              gem install fluent-plugin-prometheus -v 2.1.0 --no-document
-              echo "All plugins installed successfully"
-              # List installed plugins for debugging
-              fluent-gem list | grep fluent-plugin
-              # Start fluentd
-              exec fluentd -c /fluentd/etc/fluent.conf
           env:
             - name: NODE_NAME
               valueFrom:
