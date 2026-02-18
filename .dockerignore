@@ -1,0 +1,23 @@
+# Git files
+.git
+.gitignore
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Documentation
+README.md
+
+# Kubernetes manifests (not needed in Docker image)
+*.yml
+*.yaml
+
+# Temporary files
+*.log
+*.tmp
+tmp/
+temp/

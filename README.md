@@ -23,10 +23,49 @@ A complete Kubernetes monitoring stack with Prometheus, Grafana, Loki, Fluent Bi
 | `Grafana_Deployment-Service.yml` | Grafana Deployment and Service |
 | `Loki_ConfigMap.yml` | Loki configuration |
 | `Loki_Deployment-Service.yml` | Loki Deployment and Service |
+| `Fluentd.yml` | Fluentd DaemonSet for log collection |
+| `Dockerfile` | Custom Fluentd Docker image with pre-installed plugins |
 | `FluentBit.yml` | Fluent Bit DaemonSet for log collection |
 | `FluentBit.yml-NW` | Fluent Bit DaemonSet (alternate/network config) |
 | `NodeExporter_DaemonSet.yml` | Node Exporter DaemonSet for host metrics |
 | `Kube-State-Metrics.yml` | Kube State Metrics Deployment for cluster-level metrics |
+
+## Building Custom Fluentd Docker Image
+
+The repository includes a `Dockerfile` that creates a custom Fluentd image with all required plugins pre-installed. This eliminates the need to install plugins at runtime, resulting in faster pod startup times and more reliable deployments.
+
+### Build the Docker Image
+
+```bash
+# Build the custom Fluentd image
+docker build -t <your-registry>/fluentd:v1.17-custom .
+
+# Push to your container registry
+docker push <your-registry>/fluentd:v1.17-custom
+```
+
+Replace `<your-registry>` with your Docker registry (e.g., `docker.io/yourusername`, `ghcr.io/yourorg`, or your private registry).
+
+### Update Fluentd Deployment
+
+After building and pushing the image, update the image reference in `Fluentd.yml`:
+
+```yaml
+# Find this line in Fluentd.yml (around line 435)
+image: fluent/fluentd:v1.17-debian-1
+
+# Replace it with your custom image
+image: <your-registry>/fluentd:v1.17-custom
+```
+
+### Pre-installed Plugins
+
+The custom image includes the following Fluentd plugins:
+- `fluent-plugin-kubernetes_metadata_filter` (v3.4.0) - Kubernetes metadata enrichment
+- `fluent-plugin-grafana-loki` (v1.2.20) - Send logs to Grafana Loki
+- `fluent-plugin-systemd` (v1.1.0) - Collect systemd journal logs
+- `fluent-plugin-concat` (v2.5.0) - Concatenate multi-line logs
+- `fluent-plugin-prometheus` (v2.1.0) - Prometheus metrics export
 
 ## Steps to Run
 
@@ -74,7 +113,15 @@ kubectl apply -f Loki_ConfigMap.yml
 kubectl apply -f Loki_Deployment-Service.yml
 ```
 
-### 5. Deploy Fluent Bit (Log Collector)
+### 5. Deploy Fluentd (Log Collector)
+
+```bash
+kubectl apply -f Fluentd.yml
+```
+
+> **Note**: Make sure you've built and pushed the custom Fluentd Docker image and updated the image reference in `Fluentd.yml` before deploying. See the "Building Custom Fluentd Docker Image" section above.
+
+Alternatively, you can use Fluent Bit instead:
 
 ```bash
 kubectl apply -f FluentBit.yml
