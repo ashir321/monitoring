@@ -426,11 +426,11 @@ spec:
           effect: NoSchedule
       containers:
         - name: fluentd
-          # Use custom image with pre-installed plugins
-          # Build this image from the Dockerfile in this repository:
-          # docker build -t <your-registry>/fluentd:v1.17-custom .
-          # docker push <your-registry>/fluentd:v1.17-custom
-          image: fluent/fluentd:v1.17-debian-1
+          # TODO: Replace with your custom image after building from Dockerfile
+          # Build command: docker build -t <your-registry>/fluentd:v1.17-custom .
+          # Push command:  docker push <your-registry>/fluentd:v1.17-custom
+          # Then update the image below to: <your-registry>/fluentd:v1.17-custom
+          image: fluent/fluentd:v1.17-debian-1  # CHANGE THIS to your custom image
           securityContext:
             runAsUser: 0
           env:
